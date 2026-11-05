@@ -36,8 +36,8 @@ NORMAL_API_KEY   = "JIHADTEST"          # 🔴 আপনার গোপন key
 INFO_API_ENDPOINT = "https://mahir-info-api.vercel.app/info?uid=1120167200"           # 🔴 আপনার info API
 
 JWT_API_URLS = [
-    "https://jwt-brx-ob55.lovable.app/api/public/token?uid={%7BUID%7D}&password={%7BPASSWORD%7D}",                         # 🔴 API #1
-    "https://jwt-brx-ob55.lovable.app/api/public/token?uid={%7BUID%7D}&password={%7BPASSWORD%7D}",                         # 🔴 API #2
+    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #1 (সঠিক বেস ইউআরএল)
+    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #2 (সঠিক বেস ইউআরএল)
 ]
 
 # ============================================================
@@ -158,9 +158,12 @@ async def generate_jwt_token_with_api(uid, password, api_url, retry_count=0):
     for attempt in range(retry_count, max_attempts):
         try:
             url = f"{api_url}?uid={uid}&password={encoded_pwd}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=30) as response:
+                async with session.get(url, headers=headers, timeout=30) as response:
                     if response.status == 200:
                         data = await response.json()
                         token = None
