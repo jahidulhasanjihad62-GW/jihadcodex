@@ -36,8 +36,8 @@ NORMAL_API_KEY   = "JIHADTEST"          # 🔴 আপনার গোপন key
 INFO_API_ENDPOINT = "https://mahir-info-api.vercel.app/info?uid=1120167200"           # 🔴 আপনার info API
 
 JWT_API_URLS = [
-    "https://jwt-brx-ob55.lovable.app/api/public/token?uid=<%7BUID%7D>&password=<%7BPASSWORD%7D>",                         # 🔴 API #1
-    "https://jwt-brx-ob55.lovable.app/api/public/token?uid=<%7BUID%7D>&password=<%7BPASSWORD%7D>",                         # 🔴 API #2
+    "https://jwt-brx-ob55.lovable.app/api/public/token?uid={%7BUID%7D}&password={%7BPASSWORD%7D}",                         # 🔴 API #1
+    "https://jwt-brx-ob55.lovable.app/api/public/token?uid={%7BUID%7D}&password={%7BPASSWORD%7D}",                         # 🔴 API #2
 ]
 
 # ============================================================
