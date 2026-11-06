@@ -1,8 +1,8 @@
 # ============================================================
-#   🔥 RIFAT LIKE API 🔥
+#   🔥 RIFAT LIKE API (FIREBASE INTEGRATED) 🔥
 #   Free Fire Auto Like API — Vercel Ready
 #   Author  : RIFAT
-#   Version : 2.0
+#   Version : 2.1
 # ============================================================
 
 from flask import Flask, request, jsonify
@@ -25,28 +25,30 @@ import os
 import urllib.parse
 import jwt
 import threading
-import pickle
 
 app = Flask(__name__)
 
 # ============================================================
-#   ⚙️ CONFIG (RIFAT)
+#   ⚙️ CONFIG (RIFAT & FIREBASE)
 # ============================================================
-NORMAL_API_KEY   = "JIHADTEST"          # 🔴 আপনার গোপন key
-INFO_API_ENDPOINT = "https://mahir-info-api.vercel.app/info?uid=1120167200"           # 🔴 আপনার info API
+NORMAL_API_KEY   = "JIHADTEST"          # 🔴 আপনার গোপন key[span_4](start_span)[span_4](end_span)
+INFO_API_ENDPOINT = "https://mahir-info-api.vercel.app/info?uid=1120167200"           # 🔴 আপনার info API[span_5](start_span)[span_5](end_span)
+
+# 🔴 আপনার ফায়ারবেস রিয়েলটাইম ডাটাবেস ইউআরএল এখানে বসান (শেষে স্ল্যাশ ছাড়া)
+FIREBASE_URL = "https://likeapi-db77c-default-rtdb.firebaseio.com"
 
 JWT_API_URLS = [
-    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #1
-    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #2
+    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #1[span_6](start_span)[span_6](end_span)[span_7](start_span)[span_7](end_span)
+    "https://jwt-brx-ob55.lovable.app/api/public/token",                         # 🔴 API #2[span_8](start_span)[span_8](end_span)[span_9](start_span)[span_9](end_span)
 ]
 
 # ============================================================
-#   🌍 GLOBAL STATE
+#   🌍 GLOBAL STATE & FIREBASE SYNC
 # ============================================================
 TOKEN_CACHE      = {}
 FAILED_TOKENS    = {}
 TOKEN_THREAD_LOCK = threading.Lock()
-TOKEN_EXPIRY_TIME_HOURS = 6
+TOKEN_EXPIRY_TIME_HOURS = 3  # 3 ঘণ্টা পর টোকেন এক্সপায়ার ও রিনিউ হবে
 
 KEY_LIMIT        = 999
 tracker          = defaultdict(lambda: [0, 0])
@@ -56,48 +58,79 @@ TRACKER_LOCK     = threading.Lock()
 BANGLADESH_OFFSET = 6 * 3600
 
 # ============================================================
-#   💾 PERSISTENT STORAGE
+#   💾 FIREBASE PERSISTENT STORAGE HELPERS
 # ============================================================
-def save_data():
+def save_to_firebase(path, data):
+    if not FIREBASE_URL or "YOUR-DATABASE-NAME" in FIREBASE_URL:
+        return
     try:
-        os.makedirs('/tmp', exist_ok=True)
-        with TRACKER_LOCK:
-            with open('/tmp/tracker_data.pkl', 'wb') as f:
-                pickle.dump(dict(tracker), f)
-            with open('/tmp/liked_cache.pkl', 'wb') as f:
-                pickle.dump(dict(liked_cache), f)
-            with open('/tmp/token_cache.pkl', 'wb') as f:
-                pickle.dump(dict(TOKEN_CACHE), f)
-            with open('/tmp/failed_tokens.pkl', 'wb') as f:
-                pickle.dump(dict(FAILED_TOKENS), f)
+        url = f"{FIREBASE_URL}/{path}.json"
+        # Set sets or dicts to lists for JSON compatibility
+        if path == "liked_cache":
+            serializable_data = {k: list(v) for k, v in data.items()}
+        else:
+            serializable_data = data
+        requests.put(url, json=serializable_data, timeout=5)
     except Exception as e:
-        print(f"❌ Save error: {e}")
+        print(f"❌ Firebase Save error ({path}): {e}")
 
+def load_from_firebase(path):
+    if not FIREBASE_URL or "YOUR-DATABASE-NAME" in FIREBASE_URL:
+        return {}
+    try:
+        url = f"{FIREBASE_URL}/{path}.json"
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200 and r.json():
+            data = r.json()
+            if path == "liked_cache":
+                return defaultdict(set, {k: set(v) for k, v in data.items()})
+            return data
+    except Exception as e:
+        print(f"❌ Firebase Load error ({path}): {e}")
+    return {}
+
+def save_data():
+    with TRACKER_LOCK:
+        save_to_firebase("tracker", dict(tracker))
+        save_to_firebase("liked_cache", dict(liked_cache))
+        # টোকেন সেভ করার সময় datetime অবজেক্টকে স্ট্রিং এ রূপান্তর করা হলো
+        token_serializable = {}
+        for uid, info in TOKEN_CACHE.items():
+            token_serializable[uid] = {
+                "token": info["token"],
+                "expires_at": info["expires_at"].isoformat(),
+                "api_used": info["api_used"]
+            }
+        save_to_firebase("token_cache", token_serializable)
+        save_to_firebase("failed_tokens", dict(FAILED_TOKENS))
 
 def load_data():
     global tracker, liked_cache, TOKEN_CACHE, FAILED_TOKENS
     try:
-        os.makedirs('/tmp', exist_ok=True)
+        loaded_tracker = load_from_firebase("tracker")
+        if loaded_tracker:
+            tracker.update(loaded_tracker)
 
-        if os.path.exists('/tmp/tracker_data.pkl'):
-            with open('/tmp/tracker_data.pkl', 'rb') as f:
-                tracker.update(pickle.load(f))
+        loaded_liked = load_from_firebase("liked_cache")
+        if loaded_liked:
+            liked_cache.update(loaded_liked)
 
-        if os.path.exists('/tmp/liked_cache.pkl'):
-            with open('/tmp/liked_cache.pkl', 'rb') as f:
-                liked_cache.update(pickle.load(f))
+        loaded_tokens = load_from_firebase("token_cache")
+        if loaded_tokens:
+            for uid, info in loaded_tokens.items():
+                TOKEN_CACHE[uid] = {
+                    "token": info["token"],
+                    "expires_at": datetime.fromisoformat(info["expires_at"]),
+                    "api_used": info["api_used"]
+                }
 
-        if os.path.exists('/tmp/token_cache.pkl'):
-            with open('/tmp/token_cache.pkl', 'rb') as f:
-                TOKEN_CACHE.update(pickle.load(f))
+        loaded_failed = load_from_firebase("failed_tokens")
+        if loaded_failed:
+            FAILED_TOKENS.update(loaded_failed)
 
-        if os.path.exists('/tmp/failed_tokens.pkl'):
-            with open('/tmp/failed_tokens.pkl', 'rb') as f:
-                FAILED_TOKENS.update(pickle.load(f))
-
-        print(f"✅ RIFAT Loaded: {len(TOKEN_CACHE)} tokens | {len(FAILED_TOKENS)} failed")
+        print(f"✅ RIFAT Firebase Loaded: {len(TOKEN_CACHE)} tokens | {len(FAILED_TOKENS)} failed")
     except Exception as e:
-        print(f"❌ Load error: {e}")
+        print(f"❌ Firebase Load error: {e}")
 
 
 def get_bangladesh_midnight_timestamp():
@@ -114,12 +147,12 @@ def get_bangladesh_midnight_timestamp():
 def load_accounts(server_name):
     try:
         if server_name in {"IND", "BR", "US", "SAC", "NA"}:
-            filename = "account_ind.txt"
+            filename = "account_ind.txt[span_10](start_span)"[span_10](end_span)
         else:
-            filename = "account_bd.txt"
+            filename = "account_bd.txt[span_11](start_span)"[span_11](end_span)
 
         if not os.path.exists(filename):
-            print(f"⚠️ {filename} not found!")
+            print(f"⚠️ {filename} not found!")[span_12](start_span)[span_12](end_span)
             return []
 
         accounts = []
@@ -140,16 +173,16 @@ def load_accounts(server_name):
                         seen.add(uid)
                         accounts.append({"uid": uid, "password": pwd})
 
-        print(f"📂 Loaded {len(accounts)} accounts from {filename}")
+        print(f"📂 Loaded {len(accounts)} accounts from {filename}")[span_13](start_span)[span_13](end_span)
         return accounts
 
     except Exception as e:
-        print(f"❌ Account load error: {e}")
+        print(f"❌ Account load error: {e}")[span_14](start_span)[span_14](end_span)
         return []
 
 
 # ============================================================
-#   🔑 JWT TOKEN GENERATOR
+#   🔑 JWT TOKEN GENERATOR (3-HOUR EXPIRY & AUTO DELETE/REFRESH)
 # ============================================================
 async def generate_jwt_token_with_api(uid, password, api_url, retry_count=0):
     encoded_pwd = urllib.parse.quote(password, safe='')
@@ -180,33 +213,35 @@ async def generate_jwt_token_with_api(uid, password, api_url, retry_count=0):
                         if token:
                             try:
                                 payload = jwt.decode(token, options={"verify_signature": False})
+                                # ৩ ঘণ্টার মেয়াদের হিসাব
                                 exp = payload.get("exp", int(time.time()) + (TOKEN_EXPIRY_TIME_HOURS * 3600))
                             except Exception:
                                 exp = int(time.time()) + (TOKEN_EXPIRY_TIME_HOURS * 3600)
 
+                            # পুরনো টোকেন মুছে নতুন টোকেন ক্যাশ ও ফায়ারবেসে সেভ হবে
                             TOKEN_CACHE[uid] = {
                                 "token": token,
-                                "expires_at": datetime.utcfromtimestamp(exp),
+                                "expires_at": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_TIME_HOURS),
                                 "api_used": api_url
                             }
                             FAILED_TOKENS.pop(uid, None)
-                            print(f"✅ Token OK: {uid}")
+                            print(f"✅ Token OK & Renewed (3h): {uid}")
                             return token
                         else:
-                            print(f"⚠️ No token: {uid}")
+                            print(f"⚠️ No token: {uid}")[span_15](start_span)[span_15](end_span)
                     else:
-                        print(f"❌ API {response.status}: {uid}")
+                        print(f"❌ API {response.status}: {uid}")[span_16](start_span)[span_16](end_span)
 
         except asyncio.TimeoutError:
-            print(f"⏰ Timeout: {uid}")
+            print(f"⏰ Timeout: {uid}")[span_17](start_span)[span_17](end_span)
         except Exception as e:
-            print(f"❌ Error {uid}: {e}")
+            print(f"❌ Error {uid}: {e}")[span_18](start_span)[span_18](end_span)
 
         if attempt < max_attempts - 1:
             await asyncio.sleep(2)
 
     FAILED_TOKENS[uid] = {'timestamp': time.time(), 'api_used': api_url}
-    print(f"❌ Failed token: {uid}")
+    print(f"❌ Failed token: {uid}")[span_19](start_span)[span_19](end_span)
     return None
 
 
@@ -223,7 +258,7 @@ async def generate_tokens_batch_parallel(accounts, api_urls):
     api1_accs = accounts[:split]
     api2_accs = accounts[split:]
 
-    print(f"📊 API1: {len(api1_accs)} | API2: {len(api2_accs)}")
+    print(f"📊 API1: {len(api1_accs)} | API2: {len(api2_accs)}")[span_20](start_span)[span_20](end_span)
 
     async def gen(idx, accs):
         if not accs:
@@ -252,7 +287,7 @@ async def generate_tokens_batch_parallel(accounts, api_urls):
         if isinstance(r, dict):
             all_tokens.update(r)
 
-    print(f"✅ Total: {len(all_tokens)} tokens | {round(time.time()-start,2)}s")
+    print(f"✅ Total: {len(all_tokens)} tokens | {round(time.time()-start,2)}s")[span_21](start_span)[span_21](end_span)
     return all_tokens
 
 
@@ -265,7 +300,7 @@ async def send_like(encrypted_uid, token, url):
         headers = {
             'User-Agent': "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
             'Authorization': f"Bearer {token}",
-            'Content-Type': "application/x-www-form-urlencoded",
+            'Content-Type": "application/x-www-form-urlencoded",
             'X-GA': "v1 1",
             'ReleaseVersion': "OB55"
         }
@@ -307,7 +342,7 @@ async def send_all_likes(target_uid, server_name, url, accounts, encrypted_uid):
         already = liked_cache.get(target_uid, set())
         fresh = [a for a in accounts if a['uid'] not in already]
 
-    print(f"📊 Total: {len(accounts)} | Fresh: {len(fresh)} | Already: {len(already)}")
+    print(f"📊 Total: {len(accounts)} | Fresh: {len(fresh)} | Already: {len(already)}")[span_22](start_span)[span_22](end_span)
 
     if not fresh:
         return {'success': 0, 'failed': 0, 'total': len(accounts),
@@ -320,6 +355,7 @@ async def send_all_likes(target_uid, server_name, url, accounts, encrypted_uid):
 
     for acc in fresh:
         cached = TOKEN_CACHE.get(acc['uid'])
+        # ৩ ঘণ্টা পার হয়ে গেলে টোকেন বাদ দিয়ে নতুন জেনারেট করার চেক
         if cached and (cached["expires_at"] - datetime.utcnow()).total_seconds() > 0:
             have_tokens.append((acc, cached["token"]))
         else:
@@ -421,7 +457,7 @@ def get_player_info(encrypted_uid, server_name, token):
 
 def get_player_level_from_info(uid):
     try:
-        url = f"{INFO_API_ENDPOINT}?uid={uid}"
+        url = f"{INFO_API_ENDPOINT}?uid={uid}[span_23](start_span)"[span_23](end_span)
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
@@ -576,13 +612,13 @@ def home():
         "status": "online",
         "api": "RIFAT LIKE API",
         "owner": "RIFAT",
-        "version": "2.0",
+        "version": "2.1",
         "endpoint": "/like?uid=<UID>&server_name=<SERVER>&key=<API_KEY>",
         "servers": ["IND", "BR", "US", "SAC", "NA", "BD", "RU", "ME", "ID"]
     })
 
 
-# Load data on startup
+# Load data on startup from Firebase
 load_data()
 
 # Vercel handler
